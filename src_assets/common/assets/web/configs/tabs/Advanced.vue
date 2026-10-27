@@ -59,6 +59,16 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.av1_mode_desc') }}</div>
     </div>
 
+    <!-- H.263+ Support -->
+    <div class="mb-3">
+      <label for="h263_mode" class="form-label">{{ $t('config.h263_mode') }}</label>
+      <select id="h263_mode" class="form-select" v-model="config.h263_mode">
+        <option value="0">{{ $t('config.h263_mode_0') }}</option>
+        <option value="1">{{ $t('config.h263_mode_1') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.h263_mode_desc') }}</div>
+    </div>
+
     <!-- Capture -->
     <div class="mb-3" v-if="platform !== 'macos'">
       <label for="capture" class="form-label">{{ $t('config.capture') }}</label>

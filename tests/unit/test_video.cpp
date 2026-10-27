@@ -25,6 +25,12 @@ extern "C" {
 #include <src/config.h>
 #include <src/video.h>
 
+// ffmpeg includes
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/dict.h>
+}
+
 using namespace std::literals;
 
 /**
@@ -539,4 +545,204 @@ TEST(SoftwareEncoderConversion, Bgr0AndNv12) {
   fallback_nv12_img.height = h;
   fallback_nv12_img.row_pitch = w;
   EXPECT_EQ(device.convert(fallback_nv12_img), 0);
+}
+
+TEST(VideoH263Test, CodecFromConfigSelectsTheRequestedCodec) {
+  video::encoder_t encoder {"test"sv, {}, {}, {}, {}, 0};
+  encoder.h263.name = "h263p"s;
+
+  video::config_t config {};
+  config.videoFormat = 0;
+  EXPECT_EQ(&encoder.h264, &encoder.codec_from_config(config));
+  config.videoFormat = 1;
+  EXPECT_EQ(&encoder.hevc, &encoder.codec_from_config(config));
+  config.videoFormat = 2;
+  EXPECT_EQ(&encoder.av1, &encoder.codec_from_config(config));
+  config.videoFormat = 3;
+  EXPECT_EQ(&encoder.h263, &encoder.codec_from_config(config));
+}
+
+TEST(VideoH263Test, OnlyTheSoftwareEncoderProducesH263) {
+  EXPECT_EQ("h263p"sv, video::software.h263.name);
+  EXPECT_FALSE(video::software.h263[video::encoder_t::PASSED]);
+
+  const auto strict = std::ranges::find(video::software.h263.common_options, "strict"sv, &video::encoder_t::option_t::name);
+  ASSERT_NE(video::software.h263.common_options.end(), strict);
+  ASSERT_TRUE(std::holds_alternative<std::string>(strict->value));
+  EXPECT_EQ("unofficial"s, std::get<std::string>(strict->value));
+
+  const auto sc_threshold = std::ranges::find(video::software.h263.common_options, "sc_threshold"sv, &video::encoder_t::option_t::name);
+  ASSERT_NE(video::software.h263.common_options.end(), sc_threshold);
+  ASSERT_TRUE(std::holds_alternative<int>(sc_threshold->value));
+  EXPECT_EQ(1000000000, std::get<int>(sc_threshold->value));
+
+#ifndef __APPLE__
+  EXPECT_TRUE(video::nvenc.h263.name.empty());
+  EXPECT_FALSE(video::nvenc.h263[video::encoder_t::PASSED]);
+#endif
+}
+
+/**
+ * @brief Parameterized coverage for the stream sizes FFmpeg's H.263 encoder accepts.
+ */
+struct H263DimensionsTest: testing::TestWithParam<std::tuple<int, int, bool>> {};
+
+TEST_P(H263DimensionsTest, Check) {
+  const auto &[width, height, expected] = GetParam();
+  EXPECT_EQ(expected, video::h263_dimensions_supported(width, height)) << width << 'x' << height;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  H263DimensionsTests,
+  H263DimensionsTest,
+  testing::Values(
+    std::make_tuple(400, 240, true),
+    std::make_tuple(320, 240, true),
+    std::make_tuple(800, 480, true),
+    std::make_tuple(640, 360, true),
+    std::make_tuple(1920, 1080, true),
+    std::make_tuple(2048, 1152, true),
+    std::make_tuple(4, 4, true),
+    std::make_tuple(398, 240, false),
+    std::make_tuple(400, 242, false),
+    std::make_tuple(2052, 1080, false),
+    std::make_tuple(2048, 1156, false),
+    std::make_tuple(1152, 2048, false),
+    std::make_tuple(0, 240, false),
+    std::make_tuple(400, 0, false),
+    std::make_tuple(-400, 240, false),
+    std::make_tuple(400, -240, false)
+  )
+);
+
+/**
+ * @brief Parameterized coverage for the VBV buffer size given to the H.263 encoder.
+ */
+struct H263RcBufferSizeTest: testing::TestWithParam<std::tuple<int, int, int, int>> {};
+
+TEST_P(H263RcBufferSizeTest, RoundsUpToAtLeastOneFrame) {
+  const auto &[bitrate, fps_num, fps_den, expected] = GetParam();
+  const AVRational fps {fps_num, fps_den};
+  const auto size = video::h263_rc_buffer_size(bitrate, fps);
+  EXPECT_EQ(expected, size);
+
+  // FFmpeg's check is bit_rate * time_base.num > rc_buffer_size * time_base.den, with time_base = 1 / fps
+  EXPECT_LE(static_cast<int64_t>(bitrate) * fps_den, static_cast<int64_t>(size) * fps_num);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  H263RcBufferSizeTests,
+  H263RcBufferSizeTest,
+  testing::Values(
+    std::make_tuple(3000000, 30, 1, 100000),
+    std::make_tuple(5000000, 60, 1, 83334),
+    std::make_tuple(5000000, 60000, 1001, 83417),
+    std::make_tuple(10000000, 120, 1, 83334)
+  )
+);
+
+TEST(VideoH263Test, EncoderOpensWithTheSoftwareOptionSetAndProducesKeyedPictures) {
+  const auto *codec = avcodec_find_encoder_by_name(video::software.h263.name.c_str());
+  if (!codec) {
+    GTEST_SKIP() << "this FFmpeg build has no h263p encoder";
+  }
+
+  constexpr int width = 400;
+  constexpr int height = 240;
+  constexpr int bitrate = 5000 * 1000;
+  const AVRational fps {60, 1};
+
+  std::unique_ptr<AVCodecContext, void (*)(AVCodecContext *)> ctx {
+    avcodec_alloc_context3(codec),
+    [](AVCodecContext *c) {
+      avcodec_free_context(&c);
+    }
+  };
+  ASSERT_NE(nullptr, ctx);
+
+  // The settings make_avcodec_encode_session() applies to every software encode
+  ctx->width = width;
+  ctx->height = height;
+  ctx->framerate = fps;
+  ctx->time_base = AVRational {fps.den, fps.num};
+  ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+  ctx->max_b_frames = 0;
+  ctx->gop_size = 600;
+  ctx->keyint_min = std::numeric_limits<int>::max();
+  ctx->flags = AV_CODEC_FLAG_CLOSED_GOP | AV_CODEC_FLAG_LOW_DELAY;
+  ctx->flags2 |= AV_CODEC_FLAG2_FAST;
+  ctx->rc_max_rate = bitrate;
+  ctx->bit_rate = bitrate;
+  ctx->rc_min_rate = bitrate;
+  ctx->rc_buffer_size = video::h263_rc_buffer_size(bitrate, fps);
+  ctx->slices = 2;
+  ctx->thread_type = FF_THREAD_SLICE;
+  ctx->thread_count = ctx->slices;
+
+  AVDictionary *options = nullptr;
+  for (const auto &option : video::software.h263.common_options) {
+    if (const auto *text = std::get_if<std::string>(&option.value)) {
+      av_dict_set(&options, option.name.c_str(), text->c_str(), 0);
+    } else if (const auto *number = std::get_if<int>(&option.value)) {
+      av_dict_set_int(&options, option.name.c_str(), *number, 0);
+    }
+  }
+  ASSERT_GE(avcodec_open2(ctx.get(), codec, &options), 0);
+  av_dict_free(&options);
+
+  std::unique_ptr<AVFrame, void (*)(AVFrame *)> frame {
+    av_frame_alloc(),
+    [](AVFrame *f) {
+      av_frame_free(&f);
+    }
+  };
+  frame->format = AV_PIX_FMT_YUV420P;
+  frame->width = width;
+  frame->height = height;
+  ASSERT_GE(av_frame_get_buffer(frame.get(), 0), 0);
+
+  std::unique_ptr<AVPacket, void (*)(AVPacket *)> packet {
+    av_packet_alloc(),
+    [](AVPacket *p) {
+      av_packet_free(&p);
+    }
+  };
+
+  int keyed = 0;
+  int received = 0;
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_GE(av_frame_make_writable(frame.get()), 0);
+    for (int plane = 0; plane < 3; ++plane) {
+      const auto rows = plane == 0 ? height : height / 2;
+      std::fill_n(frame->data[plane], static_cast<std::size_t>(frame->linesize[plane]) * rows, static_cast<uint8_t>(64 + 40 * plane + i));
+    }
+    frame->pts = i;
+
+    // Sunshine requests an IDR frame by forcing the picture type, like encode() in video.cpp does
+    const bool idr = i == 0 || i == 2;
+    frame->pict_type = idr ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+    if (idr) {
+      frame->flags |= AV_FRAME_FLAG_KEY;
+    } else {
+      frame->flags &= ~AV_FRAME_FLAG_KEY;
+    }
+
+    ASSERT_GE(avcodec_send_frame(ctx.get(), frame.get()), 0);
+    while (avcodec_receive_packet(ctx.get(), packet.get()) == 0) {
+      ++received;
+      ASSERT_GE(packet->size, 4);
+
+      // Every picture starts with the byte aligned H.263 Picture Start Code
+      EXPECT_EQ(0x00, packet->data[0]);
+      EXPECT_EQ(0x00, packet->data[1]);
+      EXPECT_EQ(0x80, packet->data[2] & 0xFC);
+
+      const bool key = packet->flags & AV_PKT_FLAG_KEY;
+      EXPECT_EQ(idr, key) << "picture " << i;
+      keyed += key;
+      av_packet_unref(packet.get());
+    }
+  }
+  EXPECT_EQ(4, received);
+  EXPECT_EQ(2, keyed);
 }

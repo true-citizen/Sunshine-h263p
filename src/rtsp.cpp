@@ -909,6 +909,11 @@ namespace rtsp_stream {
       ss << "a=rtpmap:98 AV1/90000"sv << std::endl;
     }
 
+    if (video::active_h263_mode) {
+      // RFC 4629 encoding name for H.263 version 2 (H.263+), recognized by moonlight-N3DS
+      ss << "a=rtpmap:99 H263-1998/90000"sv << std::endl;
+    }
+
     if (!session.surround_params.empty()) {
       // If we have our own surround parameters, advertise them twice first
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
@@ -1234,6 +1239,20 @@ namespace rtsp_stream {
 
     if (config.monitor.videoFormat == 2 && video::active_av1_mode == 1) {
       BOOST_LOG(warning) << "AV1 is disabled, yet the client requested AV1"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
+    if (config.monitor.videoFormat == 3 && !video::active_h263_mode) {
+      BOOST_LOG(warning) << "H.263+ is disabled, yet the client requested H.263+"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
+    if (config.monitor.videoFormat == 3 && !video::h263_dimensions_supported(config.monitor.width, config.monitor.height)) {
+      BOOST_LOG(warning) << "H.263+ cannot encode "sv << config.monitor.width << 'x' << config.monitor.height << ", yet the client requested it"sv;
 
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
       return;

@@ -52,6 +52,7 @@ protected:
   void SetUp() override {
     hevc_mode_ = video::active_hevc_mode;
     av1_mode_ = video::active_av1_mode;
+    h263_mode_ = video::active_h263_mode;
     yuv444_ = video::last_encoder_probe_supported_yuv444_for_codec;
     dynamic_range_ = video::last_encoder_probe_supported_dynamic_range_for_codec;
     dynamic_range_yuv444_ = video::last_encoder_probe_supported_dynamic_range_yuv444_for_codec;
@@ -63,6 +64,7 @@ protected:
   void TearDown() override {
     video::active_hevc_mode = hevc_mode_;
     video::active_av1_mode = av1_mode_;
+    video::active_h263_mode = h263_mode_;
     video::last_encoder_probe_supported_yuv444_for_codec = yuv444_;
     video::last_encoder_probe_supported_dynamic_range_for_codec = dynamic_range_;
     video::last_encoder_probe_supported_dynamic_range_yuv444_for_codec = dynamic_range_yuv444_;
@@ -71,6 +73,7 @@ protected:
 private:
   int hevc_mode_ = 0;  ///< Saved HEVC mode.
   int av1_mode_ = 0;  ///< Saved AV1 mode.
+  int h263_mode_ = 0;  ///< Saved H.263+ mode.
   std::array<bool, 3> yuv444_ {};  ///< Saved 8-bit 4:4:4 results.
   std::array<bool, 3> dynamic_range_ {};  ///< Saved 10-bit 4:2:0 results.
   std::array<bool, 3> dynamic_range_yuv444_ {};  ///< Saved 10-bit 4:4:4 results.
@@ -108,6 +111,21 @@ TEST_F(CodecProbeAdvertisementTest, Probed8Bit444Without10Bit444AdvertisesOnly8B
   const auto flags = nvhttp::get_codec_mode_flags();
   EXPECT_EQ(expected, flags);
   EXPECT_EQ(0u, flags & (SCM_HEVC_REXT10_444 | SCM_AV1_HIGH10_444));
+}
+
+TEST_F(CodecProbeAdvertisementTest, AdvertisesH263OnlyWhenItIsActive) {
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+
+  video::active_h263_mode = 0;
+  EXPECT_EQ(0u, nvhttp::get_codec_mode_flags() & SCM_H263);
+
+  video::active_h263_mode = 1;
+  const auto flags = nvhttp::get_codec_mode_flags();
+  EXPECT_NE(0u, flags & SCM_H263);
+
+  // H.263+ is advertised on top of H.264, not instead of it
+  EXPECT_NE(0u, flags & SCM_H264);
 }
 
 TEST_P(CodecModeFlagsTest, AdvertisesOnlyProbedAndConfiguredModes) {

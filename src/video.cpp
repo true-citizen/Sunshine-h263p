@@ -1224,7 +1224,23 @@ namespace video {
       "libx264"s,
       {},  // capabilities
     },
-    H264_ONLY | PARALLEL_ENCODING | ALWAYS_REPROBE | YUV444_SUPPORT
+    H264_ONLY | PARALLEL_ENCODING | ALWAYS_REPROBE | YUV444_SUPPORT,
+    {
+      // H.263+ for clients that cannot decode H.264 fast enough (e.g. the original 3DS).
+      // FFmpeg's MPEG-style encoders refuse AV_CODEC_FLAG_LOW_DELAY unless strict compliance
+      // is relaxed, and refuse closed GOPs unless scene change detection is turned off.
+      {
+        {"strict"s, "unofficial"s},
+        {"sc_threshold"s, 1000000000},
+      },
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "h263p"s,
+      {},  // capabilities
+    }
   };
 
 #if defined(__linux__) || defined(linux) || defined(__linux) || defined(__FreeBSD__)
@@ -1471,10 +1487,17 @@ namespace video {
   static encoder_t *chosen_encoder;
   int active_hevc_mode;  ///< HEVC mode selected by the most recent encoder probe.
   int active_av1_mode;  ///< AV1 mode selected by the most recent encoder probe.
+  int active_h263_mode;  ///< H.263+ mode selected by the most recent encoder probe.
   bool last_encoder_probe_supported_ref_frames_invalidation = false;  ///< Whether the last probe found reference-frame invalidation support.
   std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec = {};  ///< YUV444 support discovered for each probed codec.
   std::array<bool, 3> last_encoder_probe_supported_dynamic_range_for_codec = {};  ///< 10-bit 4:2:0 support discovered for each probed codec.
   std::array<bool, 3> last_encoder_probe_supported_dynamic_range_yuv444_for_codec = {};  ///< 10-bit YUV444 support discovered for each probed codec.
+
+  bool h263_dimensions_supported(int width, int height) {
+    constexpr int max_width = 2048;
+    constexpr int max_height = 1152;
+    return width > 0 && height > 0 && width % 4 == 0 && height % 4 == 0 && width <= max_width && height <= max_height;
+  }
 
   /**
    * @brief Recreate a display capture object after a capture failure.
@@ -2050,6 +2073,11 @@ namespace video {
           // but YUV 4:4:4 sampling requires High profile
           ctx->profile = (config.chromaSamplingType == 1) ? AV_PROFILE_AV1_HIGH : AV_PROFILE_AV1_MAIN;
           break;
+
+        case 3:
+          // H.263+ has no profiles; it is always 8-bit 4:2:0 (rejected earlier through the missing
+          // YUV444 and DYNAMIC_RANGE capabilities of the codec).
+          break;
       }
 
       // B-frames delay decoder output, so never use them
@@ -2066,6 +2094,12 @@ namespace video {
                           std::numeric_limits<std::int16_t>::max() :
                           std::numeric_limits<int>::max();
         ctx->keyint_min = std::numeric_limits<int>::max();
+      }
+
+      if (config.videoFormat == 3) {
+        // The H.263 encoder caps the GOP at 600 pictures, so the "infinite" GOP above would only
+        // make it log a warning. On-demand IDR frames are unaffected, as they override the GOP.
+        ctx->gop_size = 600;
       }
 
       // Some client decoders have limits on the number of reference frames
@@ -2232,7 +2266,10 @@ namespace video {
       }
 
       if (!(encoder.flags & NO_RC_BUF_LIMIT)) {
-        if (!hardware && (ctx->slices > 1 || config.videoFormat == 1)) {
+        if (config.videoFormat == 3) {
+          // The H.263 encoder rejects the truncated bitrate / framerate used below
+          ctx->rc_buffer_size = h263_rc_buffer_size(bitrate, ctx->framerate);
+        } else if (!hardware && (ctx->slices > 1 || config.videoFormat == 1)) {
           // Use a larger rc_buffer_size for software encoding when slices are enabled,
           // because libx264 can severely degrade quality if the buffer is too small.
           // libx265 encounters this issue more frequently, so always scale the
@@ -3076,10 +3113,12 @@ namespace video {
 
     auto test_hevc = active_hevc_mode >= 2 || (active_hevc_mode == 0 && !(encoder.flags & H264_ONLY));
     auto test_av1 = active_av1_mode >= 2 || (active_av1_mode == 0 && !(encoder.flags & H264_ONLY));
+    auto test_h263 = active_h263_mode == 1 && !encoder.h263.name.empty();
 
     encoder.h264.capabilities.set();
     encoder.hevc.capabilities.set();
     encoder.av1.capabilities.set();
+    encoder.h263.capabilities.reset();
 
     // First, test encoder viability
     config_t config_max_ref_frames {1920, 1080, 60, 6000, 1000, 1, 1, 1, 0, 0, 0, 0};
@@ -3172,6 +3211,17 @@ namespace video {
     } else {
       // Clear all cap bits for AV1 if we didn't probe it
       encoder.av1.capabilities.reset();
+    }
+
+    if (test_h263) {
+      config_autoselect.videoFormat = 3;
+
+      if (disp->is_codec_supported(encoder.h263.name, config_autoselect)) {
+        // H.263+ only ever uses a single reference frame, so the reference frame limit doesn't matter
+        encoder.h263[encoder_t::PASSED] = validate_config(disp, encoder, config_autoselect) >= 0;
+      } else {
+        BOOST_LOG(info) << "Encoder ["sv << encoder.h263.name << "] is not supported on this GPU"sv;
+      }
     }
 
     // Test HDR and YUV444 support
@@ -3310,6 +3360,7 @@ namespace video {
     chosen_encoder = nullptr;
     active_hevc_mode = config::video.hevc_mode;
     active_av1_mode = config::video.av1_mode;
+    active_h263_mode = config::video.h263_mode;
     reset_encoder_probe_results();
 
     auto adjust_encoder_constraints_hevc = [&](encoder_t *encoder) {
@@ -3523,6 +3574,16 @@ namespace video {
         }
       }
       BOOST_LOG(debug) << "ENCODER STATUS ACTIVE_AV1_MODE: "sv << active_av1_mode;
+    }
+
+    if (active_h263_mode == 1) {
+      if (encoder.h263[encoder_t::PASSED]) {
+        BOOST_LOG(info) << "Found H.263+ encoder: "sv << encoder.h263.name << " ["sv << encoder.name << ']';
+      } else {
+        // Only the software encoder can produce H.263+, and the encoder is shared by all clients
+        BOOST_LOG(warning) << "H.263+ is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        active_h263_mode = 0;
+      }
     }
 
     return 0;

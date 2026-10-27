@@ -380,6 +380,15 @@ namespace nvhttp {
    */
   void erase_all_clients();
 
+#ifndef SCM_H263
+  /**
+   * @brief ServerCodecModeSupport bit that advertises H.263+ (moonlight-N3DS extension).
+   *
+   * Defined here as well so Sunshine builds against an upstream moonlight-common-c, which lacks it.
+   */
+  #define SCM_H263 0x10000000
+#endif
+
   /**
    * @brief Get codec mode flags.
    *
