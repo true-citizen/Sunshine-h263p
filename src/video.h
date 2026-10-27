@@ -39,7 +39,7 @@ namespace video {
     int slicesPerFrame;  ///< Number of slices per frame.
     int numRefFrames;  ///< Maximum number of reference frames.
     int encoderCscMode;  ///< Requested color range and SDR colorspace; HDR always uses BT.2020 and ST2084.
-    int videoFormat;  ///< Video codec format: 0 = H.264, 1 = HEVC, 2 = AV1.
+    int videoFormat;  ///< Video codec format: 0 = H.264, 1 = HEVC, 2 = AV1, 3 = H.263+ (moonlight-N3DS extension).
     int dynamicRange;  ///< Encoding color depth: 0 = 8-bit, 1 = 10-bit.
     int chromaSamplingType;  ///< Chroma sampling type: 0 = 4:2:0, 1 = 4:4:4.
     int enableIntraRefresh;  ///< Intra refresh setting: 0 = disabled, 1 = enabled.
@@ -405,7 +405,7 @@ namespace video {
      * @brief Select the codec descriptor requested by a stream configuration.
      *
      * @param config Configuration values to apply.
-     * @return Codec descriptor for H.264, HEVC, or AV1.
+     * @return Codec descriptor for H.264, HEVC, AV1, or H.263+.
      */
     const codec_t &codec_from_config(const config_t &config) const {
       switch (config.videoFormat) {
@@ -418,10 +418,16 @@ namespace video {
           return hevc;
         case 2:
           return av1;
+        case 3:
+          return h263;
       }
     }
 
     uint32_t flags;  ///< Encoder flags advertised to clients through GameStream capability responses.
+
+    // Declared after the members above on purpose: encoders initialize those positionally,
+    // so the encoders that cannot produce H.263+ keep value-initializing this (no name, no capabilities).
+    codec_t h263;  ///< H.263+ codec capability and option set (software encoder only).
   };
 
   /**
@@ -686,6 +692,22 @@ namespace video {
 
   extern int active_hevc_mode;
   extern int active_av1_mode;
+
+  /**
+   * @brief H.263+ mode selected by the most recent encoder probe: 1 when H.263+ is advertised, otherwise 0.
+   */
+  extern int active_h263_mode;
+
+  /**
+   * @brief Check whether the H.263+ encoder can produce a stream of the given size.
+   *
+   * FFmpeg's H.263+ encoder needs dimensions that are multiples of 4 and no larger than 2048x1152.
+   *
+   * @param width Stream width in pixels.
+   * @param height Stream height in pixels.
+   * @return True when a stream of that size can be encoded as H.263+.
+   */
+  bool h263_dimensions_supported(int width, int height);
   extern bool last_encoder_probe_supported_ref_frames_invalidation;
   extern std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
   extern std::array<bool, 3> last_encoder_probe_supported_dynamic_range_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
@@ -798,5 +820,20 @@ namespace video {
   inline std::chrono::nanoseconds capture_frame_interval(const config_t &config) {
     const AVRational fps = framerate_to_rational(config);
     return std::chrono::nanoseconds {(static_cast<int64_t>(fps.den) * 1'000'000'000LL) / fps.num};
+  }
+
+  /**
+   * @brief VBV buffer size, in bits, that FFmpeg's H.263 encoder accepts.
+   *
+   * The encoder refuses a buffer that is smaller than one frame of bits. The usual truncating
+   * bitrate / framerate is too small whenever that division is not exact (for example 5000 Kbps
+   * at 60 fps), so this rounds up using the exact framerate instead.
+   *
+   * @param bitrate Video bitrate in bits per second.
+   * @param framerate Exact framerate as a rational.
+   * @return Buffer size in bits.
+   */
+  inline int h263_rc_buffer_size(int bitrate, const AVRational &framerate) {
+    return static_cast<int>((static_cast<int64_t>(bitrate) * framerate.den + framerate.num - 1) / framerate.num);
   }
 }  // namespace video

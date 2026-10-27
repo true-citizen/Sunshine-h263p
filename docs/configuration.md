@@ -2226,6 +2226,42 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
 </table>
 
+### h263_mode
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Allows clients that cannot decode H.264 fast enough, such as the original Nintendo 3DS, to request an H.263+
+            (H.263 version 2) video stream. H.263+ is only available with the software encoder (set
+            `encoder = software`), and the stream size must be a multiple of 4 in both directions, up to 2048x1152.
+            Clients that do not know about H.263+ are not affected.
+            @note{H.263+ is an extension to the Moonlight protocol. It requires a client that supports it.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            h263_mode = 1
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="2">Choices</td>
+        <td>0</td>
+        <td>do not advertise support for H.263+</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>advertise support for H.263+ when the software encoder is used</td>
+    </tr>
+</table>
+
 ### capture
 
 <table>

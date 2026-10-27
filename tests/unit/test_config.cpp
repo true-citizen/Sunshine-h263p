@@ -63,6 +63,10 @@ TEST(ConfigDefaultsTest, UsesAutomaticGamepadSelection) {
   EXPECT_EQ(config::input.gamepad, "auto");
 }
 
+TEST(ConfigDefaultsTest, DisablesH263ByDefault) {
+  EXPECT_EQ(config::video.h263_mode, 0);
+}
+
 TEST(ConfigDefaultsTest, TreatsFp16SdrCapturesAsLinear) {
   EXPECT_FALSE(config::video.fp16_sdr_gamma_encoded);
 }
@@ -218,6 +222,26 @@ TEST_F(ConfigPersistenceTest, ParsesFp16SdrGammaEncodedOption) {
 
   config::apply_config_for_test("fp16_sdr_gamma_encoded = disabled\n");
   EXPECT_FALSE(config::video.fp16_sdr_gamma_encoded);
+}
+
+TEST_F(ConfigPersistenceTest, ParsesH263ModeAndRejectsOutOfRangeValues) {
+  const auto original_video = config::video;
+  const auto restore_video = util::fail_guard([original_video]() {
+    config::video = original_video;
+  });
+  const auto apps_file = config_file().parent_path() / "sunshine_test_config_apps.json";
+  ASSERT_EQ(file_handler::write_file(apps_file.string().c_str(), "{}"), 0);
+  config::stream.file_apps = apps_file.string();
+
+  config::apply_config_for_test("h263_mode = 1\n");
+  EXPECT_EQ(config::video.h263_mode, 1);
+
+  config::apply_config_for_test("h263_mode = 0\n");
+  EXPECT_EQ(config::video.h263_mode, 0);
+
+  config::video.h263_mode = 1;
+  config::apply_config_for_test("h263_mode = 2\n");
+  EXPECT_EQ(config::video.h263_mode, 1);
 }
 
 TEST_F(ConfigPersistenceTest, ParsesHexIntegersWiderThanAnInt) {
