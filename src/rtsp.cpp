@@ -1230,6 +1230,13 @@ namespace rtsp_stream {
       config.monitor.bitrate = (int) configuredBitrateKbps;
     }
 
+    if (config.monitor.videoFormat == 0 && !video::h264_enabled()) {
+      BOOST_LOG(warning) << "H.264 is disabled, yet the client requested H.264"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
     if (config.monitor.videoFormat == 1 && video::active_hevc_mode == 1) {
       BOOST_LOG(warning) << "HEVC is disabled, yet the client requested HEVC"sv;
 

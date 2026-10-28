@@ -547,6 +547,80 @@ TEST(SoftwareEncoderConversion, Bgr0AndNv12) {
   EXPECT_EQ(device.convert(fallback_nv12_img), 0);
 }
 
+/**
+ * @brief Restores the global video configuration and probe modes that the H.264 toggle tests change.
+ */
+class VideoH264ToggleTest: public testing::Test {
+protected:
+  /**
+   * @brief Save the global state.
+   */
+  void SetUp() override {
+    h264_mode_ = config::video.h264_mode;
+    hevc_mode_ = video::active_hevc_mode;
+    av1_mode_ = video::active_av1_mode;
+    h263_mode_ = video::active_h263_mode;
+  }
+
+  /**
+   * @brief Restore the global state.
+   */
+  void TearDown() override {
+    config::video.h264_mode = h264_mode_;
+    video::active_hevc_mode = hevc_mode_;
+    video::active_av1_mode = av1_mode_;
+    video::active_h263_mode = h263_mode_;
+  }
+
+private:
+  int h264_mode_ = 0;  ///< Saved H.264 setting.
+  int hevc_mode_ = 0;  ///< Saved HEVC mode.
+  int av1_mode_ = 0;  ///< Saved AV1 mode.
+  int h263_mode_ = 0;  ///< Saved H.263+ mode.
+};
+
+TEST_F(VideoH264ToggleTest, H264IsEnabledUnlessTheSettingTurnsItOff) {
+  config::video.h264_mode = 0;
+  EXPECT_TRUE(video::h264_enabled());
+
+  config::video.h264_mode = 1;
+  EXPECT_FALSE(video::h264_enabled());
+}
+
+TEST_F(VideoH264ToggleTest, EnabledH264AlwaysCountsAsAnAdvertisedCodec) {
+  config::video.h264_mode = 0;
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+  video::active_h263_mode = 0;
+  EXPECT_TRUE(video::has_advertised_codec());
+}
+
+TEST_F(VideoH264ToggleTest, DisabledH264WithNoOtherCodecAdvertisesNothing) {
+  config::video.h264_mode = 1;
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+  video::active_h263_mode = 0;
+  EXPECT_FALSE(video::has_advertised_codec());
+}
+
+TEST_F(VideoH264ToggleTest, DisabledH264NeedsHevcAv1OrH263ToStillAdvertiseSomething) {
+  config::video.h264_mode = 1;
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+  video::active_h263_mode = 0;
+
+  video::active_h263_mode = 1;
+  EXPECT_TRUE(video::has_advertised_codec());
+  video::active_h263_mode = 0;
+
+  video::active_hevc_mode = 2;
+  EXPECT_TRUE(video::has_advertised_codec());
+  video::active_hevc_mode = 1;
+
+  video::active_av1_mode = 2;
+  EXPECT_TRUE(video::has_advertised_codec());
+}
+
 TEST(VideoH263Test, CodecFromConfigSelectsTheRequestedCodec) {
   video::encoder_t encoder {"test"sv, {}, {}, {}, {}, 0};
   encoder.h263.name = "h263p"s;

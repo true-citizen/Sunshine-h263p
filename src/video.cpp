@@ -1499,6 +1499,14 @@ namespace video {
     return width > 0 && height > 0 && width % 4 == 0 && height % 4 == 0 && width <= max_width && height <= max_height;
   }
 
+  bool h264_enabled() {
+    return config::video.h264_mode == 0;
+  }
+
+  bool has_advertised_codec() {
+    return h264_enabled() || active_hevc_mode >= 2 || active_av1_mode >= 2 || active_h263_mode != 0;
+  }
+
   /**
    * @brief Recreate a display capture object after a capture failure.
    *
@@ -3583,6 +3591,14 @@ namespace video {
         // Only the software encoder can produce H.263+, and the encoder is shared by all clients
         BOOST_LOG(warning) << "H.263+ is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
         active_h263_mode = 0;
+      }
+    }
+
+    if (!h264_enabled()) {
+      BOOST_LOG(info) << "H.264 is disabled by the h264_mode setting, so it will not be advertised and requests for it will be rejected"sv;
+
+      if (!has_advertised_codec()) {
+        BOOST_LOG(warning) << "H.264 is disabled and no other codec is available, so clients will not be able to stream. Enable H.263+ (h263_mode = 1 with encoder = software), HEVC or AV1, or enable H.264 again."sv;
       }
     }
 

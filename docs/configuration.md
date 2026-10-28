@@ -2262,6 +2262,42 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
 </table>
 
+### h264_mode
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Allows H.264 to be turned off, so clients are not told it is available and a client that asks for it anyway
+            is rejected. Use this to stop a client from falling back to H.264, for example to force a client to use
+            H.263+ (see `h263_mode`). Make sure another codec is available (H.263+ with the software
+            encoder, HEVC or AV1), otherwise clients will have nothing to stream with.
+            @note{The encoder probe still uses H.264 internally to check that an encoder works.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            h264_mode = 1
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="2">Choices</td>
+        <td>0</td>
+        <td>advertise support for H.264</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>do not advertise H.264 and reject clients that request it</td>
+    </tr>
+</table>
+
 ### capture
 
 <table>

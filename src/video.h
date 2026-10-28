@@ -708,6 +708,26 @@ namespace video {
    * @return True when a stream of that size can be encoded as H.263+.
    */
   bool h263_dimensions_supported(int width, int height);
+
+  /**
+   * @brief Check whether H.264 is allowed to be advertised to and requested by clients.
+   *
+   * H.264 stays enabled unless the user sets `h264_mode = 1`. The encoder probe still uses H.264 to
+   * check that an encoder works at all, but a disabled H.264 is neither advertised nor accepted.
+   *
+   * @return True when H.264 is enabled.
+   */
+  bool h264_enabled();
+
+  /**
+   * @brief Check whether at least one codec is advertised to clients after the most recent encoder probe.
+   *
+   * This is false only when H.264 is disabled and neither HEVC, AV1 nor H.263+ is active, which leaves
+   * clients with nothing they could request.
+   *
+   * @return True when at least one codec is advertised.
+   */
+  bool has_advertised_codec();
   extern bool last_encoder_probe_supported_ref_frames_invalidation;
   extern std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
   extern std::array<bool, 3> last_encoder_probe_supported_dynamic_range_for_codec;  // 0 - H.264, 1 - HEVC, 2 - AV1
