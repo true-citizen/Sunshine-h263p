@@ -3297,6 +3297,10 @@ namespace video {
       config_autoselect.videoFormat = 3;
 
       if (disp->is_codec_supported(encoder.h263.name, config_autoselect)) {
+        // make_encode_session() refuses a codec whose PASSED flag is not set, so it has to be set
+        // while probing, exactly like HEVC and AV1 get all their capability bits set beforehand.
+        encoder.h263[encoder_t::PASSED] = true;
+
         // H.263+ only ever uses a single reference frame, so the reference frame limit doesn't matter
         encoder.h263[encoder_t::PASSED] = validate_config(disp, encoder, config_autoselect) >= 0;
       } else {
@@ -3308,6 +3312,9 @@ namespace video {
       config_autoselect.videoFormat = 4;
 
       if (disp->is_codec_supported(encoder.mpeg2.name, config_autoselect)) {
+        // See H.263+ above: the PASSED flag has to be set for the probe to be able to open the encoder
+        encoder.mpeg2[encoder_t::PASSED] = true;
+
         // MPEG-2 without B-frames only ever uses a single reference frame, so the reference frame limit doesn't matter
         encoder.mpeg2[encoder_t::PASSED] = validate_config(disp, encoder, config_autoselect) >= 0;
       } else {
@@ -3673,7 +3680,11 @@ namespace video {
         BOOST_LOG(info) << "Found H.263+ encoder: "sv << encoder.h263.name << " ["sv << encoder.name << ']';
       } else {
         // Only the software encoder can produce H.263+, and the encoder is shared by all clients
-        BOOST_LOG(warning) << "H.263+ is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        if (encoder.name == "software"sv) {
+          BOOST_LOG(warning) << "H.263+ is enabled, but the software encoder failed to open it. See the errors above."sv;
+        } else {
+          BOOST_LOG(warning) << "H.263+ is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        }
         active_h263_mode = 0;
       }
     }
@@ -3683,7 +3694,11 @@ namespace video {
         BOOST_LOG(info) << "Found MPEG-2 encoder: "sv << encoder.mpeg2.name << " ["sv << encoder.name << ']';
       } else {
         // Only the software encoder can produce MPEG-2, and the encoder is shared by all clients
-        BOOST_LOG(warning) << "MPEG-2 is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        if (encoder.name == "software"sv) {
+          BOOST_LOG(warning) << "MPEG-2 is enabled, but the software encoder failed to open it. See the errors above."sv;
+        } else {
+          BOOST_LOG(warning) << "MPEG-2 is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        }
         active_mpeg2_mode = 0;
       }
     }
