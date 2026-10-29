@@ -1240,6 +1240,21 @@ namespace video {
       {},  // Fallback options
       "h263p"s,
       {},  // capabilities
+    },
+    {
+      // MPEG-2 for clients that cannot decode H.264 fast enough (e.g. the original 3DS).
+      // Like the other MPEG-style encoders, it refuses closed GOPs unless scene change detection is
+      // turned off. Low delay mode needs no relaxed compliance for MPEG-2.
+      {
+        {"sc_threshold"s, 1000000000},
+      },
+      {},  // SDR-specific options
+      {},  // HDR-specific options
+      {},  // YUV444 SDR-specific options
+      {},  // YUV444 HDR-specific options
+      {},  // Fallback options
+      "mpeg2video"s,
+      {},  // capabilities
     }
   };
 
@@ -1488,6 +1503,7 @@ namespace video {
   int active_hevc_mode;  ///< HEVC mode selected by the most recent encoder probe.
   int active_av1_mode;  ///< AV1 mode selected by the most recent encoder probe.
   int active_h263_mode;  ///< H.263+ mode selected by the most recent encoder probe.
+  int active_mpeg2_mode;  ///< MPEG-2 mode selected by the most recent encoder probe.
   bool last_encoder_probe_supported_ref_frames_invalidation = false;  ///< Whether the last probe found reference-frame invalidation support.
   std::array<bool, 3> last_encoder_probe_supported_yuv444_for_codec = {};  ///< YUV444 support discovered for each probed codec.
   std::array<bool, 3> last_encoder_probe_supported_dynamic_range_for_codec = {};  ///< 10-bit 4:2:0 support discovered for each probed codec.
@@ -1499,12 +1515,54 @@ namespace video {
     return width > 0 && height > 0 && width % 4 == 0 && height % 4 == 0 && width <= max_width && height <= max_height;
   }
 
+  bool mpeg2_dimensions_supported(int width, int height) {
+    constexpr int max_size = 16383;
+    constexpr int period = 4096;
+    const auto size_supported = [](int size) {
+      return size >= 2 && size <= max_size && size % period >= 2;
+    };
+    return size_supported(width) && size_supported(height);
+  }
+
+  bool mpeg2_framerate_supported(const AVRational &framerate) {
+    if (framerate.num <= 0 || framerate.den <= 0) {
+      return false;
+    }
+
+    constexpr std::array<std::array<int, 2>, 8> base_framerates {{
+      {24000, 1001},
+      {24, 1},
+      {25, 1},
+      {30000, 1001},
+      {30, 1},
+      {50, 1},
+      {60000, 1001},
+      {60, 1},
+    }};
+
+    // The sequence extension scales the base framerate by (n + 1) / (d + 1) with n in [0, 3] and d in [0, 31].
+    // Compare as fractions, so that NTSC framerates such as 59.94 stay exact.
+    for (const auto &[base_num, base_den] : base_framerates) {
+      for (int scale_num = 1; scale_num <= 4; ++scale_num) {
+        for (int scale_den = 1; scale_den <= 32; ++scale_den) {
+          const auto lhs = static_cast<int64_t>(framerate.num) * base_den * scale_den;
+          const auto rhs = static_cast<int64_t>(base_num) * scale_num * framerate.den;
+          if (lhs == rhs) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
   bool h264_enabled() {
     return config::video.h264_mode == 0;
   }
 
   bool has_advertised_codec() {
-    return h264_enabled() || active_hevc_mode >= 2 || active_av1_mode >= 2 || active_h263_mode != 0;
+    return h264_enabled() || active_hevc_mode >= 2 || active_av1_mode >= 2 || active_h263_mode != 0 || active_mpeg2_mode != 0;
   }
 
   /**
@@ -2086,6 +2144,10 @@ namespace video {
           // H.263+ has no profiles; it is always 8-bit 4:2:0 (rejected earlier through the missing
           // YUV444 and DYNAMIC_RANGE capabilities of the codec).
           break;
+
+        case 4:
+          // Same for MPEG-2: the profile FFmpeg picks is fine, and it is always 8-bit 4:2:0.
+          break;
       }
 
       // B-frames delay decoder output, so never use them
@@ -2104,9 +2166,9 @@ namespace video {
         ctx->keyint_min = std::numeric_limits<int>::max();
       }
 
-      if (config.videoFormat == 3) {
-        // The H.263 encoder caps the GOP at 600 pictures, so the "infinite" GOP above would only
-        // make it log a warning. On-demand IDR frames are unaffected, as they override the GOP.
+      if (config.videoFormat == 3 || config.videoFormat == 4) {
+        // The H.263 and MPEG-2 encoders cap the GOP at 600 pictures, so the "infinite" GOP above would
+        // only make them log a warning. On-demand IDR frames are unaffected, as they override the GOP.
         ctx->gop_size = 600;
       }
 
@@ -2274,9 +2336,9 @@ namespace video {
       }
 
       if (!(encoder.flags & NO_RC_BUF_LIMIT)) {
-        if (config.videoFormat == 3) {
-          // The H.263 encoder rejects the truncated bitrate / framerate used below
-          ctx->rc_buffer_size = h263_rc_buffer_size(bitrate, ctx->framerate);
+        if (config.videoFormat == 3 || config.videoFormat == 4) {
+          // The H.263 and MPEG-2 encoders reject the truncated bitrate / framerate used below
+          ctx->rc_buffer_size = mpeg_rc_buffer_size(bitrate, ctx->framerate);
         } else if (!hardware && (ctx->slices > 1 || config.videoFormat == 1)) {
           // Use a larger rc_buffer_size for software encoding when slices are enabled,
           // because libx264 can severely degrade quality if the buffer is too small.
@@ -3122,11 +3184,13 @@ namespace video {
     auto test_hevc = active_hevc_mode >= 2 || (active_hevc_mode == 0 && !(encoder.flags & H264_ONLY));
     auto test_av1 = active_av1_mode >= 2 || (active_av1_mode == 0 && !(encoder.flags & H264_ONLY));
     auto test_h263 = active_h263_mode == 1 && !encoder.h263.name.empty();
+    auto test_mpeg2 = active_mpeg2_mode == 1 && !encoder.mpeg2.name.empty();
 
     encoder.h264.capabilities.set();
     encoder.hevc.capabilities.set();
     encoder.av1.capabilities.set();
     encoder.h263.capabilities.reset();
+    encoder.mpeg2.capabilities.reset();
 
     // First, test encoder viability
     config_t config_max_ref_frames {1920, 1080, 60, 6000, 1000, 1, 1, 1, 0, 0, 0, 0};
@@ -3229,6 +3293,17 @@ namespace video {
         encoder.h263[encoder_t::PASSED] = validate_config(disp, encoder, config_autoselect) >= 0;
       } else {
         BOOST_LOG(info) << "Encoder ["sv << encoder.h263.name << "] is not supported on this GPU"sv;
+      }
+    }
+
+    if (test_mpeg2) {
+      config_autoselect.videoFormat = 4;
+
+      if (disp->is_codec_supported(encoder.mpeg2.name, config_autoselect)) {
+        // MPEG-2 without B-frames only ever uses a single reference frame, so the reference frame limit doesn't matter
+        encoder.mpeg2[encoder_t::PASSED] = validate_config(disp, encoder, config_autoselect) >= 0;
+      } else {
+        BOOST_LOG(info) << "Encoder ["sv << encoder.mpeg2.name << "] is not supported on this GPU"sv;
       }
     }
 
@@ -3369,6 +3444,7 @@ namespace video {
     active_hevc_mode = config::video.hevc_mode;
     active_av1_mode = config::video.av1_mode;
     active_h263_mode = config::video.h263_mode;
+    active_mpeg2_mode = config::video.mpeg2_mode;
     reset_encoder_probe_results();
 
     auto adjust_encoder_constraints_hevc = [&](encoder_t *encoder) {
@@ -3594,11 +3670,21 @@ namespace video {
       }
     }
 
+    if (active_mpeg2_mode == 1) {
+      if (encoder.mpeg2[encoder_t::PASSED]) {
+        BOOST_LOG(info) << "Found MPEG-2 encoder: "sv << encoder.mpeg2.name << " ["sv << encoder.name << ']';
+      } else {
+        // Only the software encoder can produce MPEG-2, and the encoder is shared by all clients
+        BOOST_LOG(warning) << "MPEG-2 is enabled, but the ["sv << encoder.name << "] encoder cannot produce it. Set encoder = software to use it."sv;
+        active_mpeg2_mode = 0;
+      }
+    }
+
     if (!h264_enabled()) {
       BOOST_LOG(info) << "H.264 is disabled by the h264_mode setting, so it will not be advertised and requests for it will be rejected"sv;
 
       if (!has_advertised_codec()) {
-        BOOST_LOG(warning) << "H.264 is disabled and no other codec is available, so clients will not be able to stream. Enable H.263+ (h263_mode = 1 with encoder = software), HEVC or AV1, or enable H.264 again."sv;
+        BOOST_LOG(warning) << "H.264 is disabled and no other codec is available, so clients will not be able to stream. Enable H.263+ or MPEG-2 (h263_mode = 1 or mpeg2_mode = 1, with encoder = software), HEVC or AV1, or enable H.264 again."sv;
       }
     }
 

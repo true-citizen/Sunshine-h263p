@@ -55,6 +55,7 @@ protected:
     av1_mode_ = video::active_av1_mode;
     h263_mode_ = video::active_h263_mode;
     h264_mode_ = config::video.h264_mode;
+    mpeg2_mode_ = video::active_mpeg2_mode;
     yuv444_ = video::last_encoder_probe_supported_yuv444_for_codec;
     dynamic_range_ = video::last_encoder_probe_supported_dynamic_range_for_codec;
     dynamic_range_yuv444_ = video::last_encoder_probe_supported_dynamic_range_yuv444_for_codec;
@@ -68,6 +69,7 @@ protected:
     video::active_av1_mode = av1_mode_;
     video::active_h263_mode = h263_mode_;
     config::video.h264_mode = h264_mode_;
+    video::active_mpeg2_mode = mpeg2_mode_;
     video::last_encoder_probe_supported_yuv444_for_codec = yuv444_;
     video::last_encoder_probe_supported_dynamic_range_for_codec = dynamic_range_;
     video::last_encoder_probe_supported_dynamic_range_yuv444_for_codec = dynamic_range_yuv444_;
@@ -78,6 +80,7 @@ private:
   int av1_mode_ = 0;  ///< Saved AV1 mode.
   int h263_mode_ = 0;  ///< Saved H.263+ mode.
   int h264_mode_ = 0;  ///< Saved H.264 setting.
+  int mpeg2_mode_ = 0;  ///< Saved MPEG-2 mode.
   std::array<bool, 3> yuv444_ {};  ///< Saved 8-bit 4:4:4 results.
   std::array<bool, 3> dynamic_range_ {};  ///< Saved 10-bit 4:2:0 results.
   std::array<bool, 3> dynamic_range_yuv444_ {};  ///< Saved 10-bit 4:4:4 results.
@@ -154,9 +157,39 @@ TEST_F(CodecProbeAdvertisementTest, DisabledH264WithNothingElseAdvertisesNoCodec
   video::active_hevc_mode = 1;
   video::active_av1_mode = 1;
   video::active_h263_mode = 0;
+  video::active_mpeg2_mode = 0;
   config::video.h264_mode = 1;
 
   EXPECT_EQ(0u, nvhttp::get_codec_mode_flags());
+}
+
+TEST_F(CodecProbeAdvertisementTest, AdvertisesMpeg2OnlyWhenItIsActive) {
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+  video::active_h263_mode = 0;
+  config::video.h264_mode = 0;
+
+  video::active_mpeg2_mode = 0;
+  EXPECT_EQ(0u, nvhttp::get_codec_mode_flags() & SCM_MPEG2);
+
+  video::active_mpeg2_mode = 1;
+  const auto flags = nvhttp::get_codec_mode_flags();
+  EXPECT_NE(0u, flags & SCM_MPEG2);
+
+  // MPEG-2 is advertised on top of H.264, not instead of it, and does not turn on H.263+
+  EXPECT_NE(0u, flags & SCM_H264);
+  EXPECT_EQ(0u, flags & SCM_H263);
+}
+
+TEST_F(CodecProbeAdvertisementTest, Mpeg2AndH263UseDifferentBits) {
+  video::active_hevc_mode = 1;
+  video::active_av1_mode = 1;
+  video::active_h263_mode = 1;
+  video::active_mpeg2_mode = 1;
+  config::video.h264_mode = 1;
+
+  EXPECT_EQ(static_cast<std::uint32_t>(SCM_H263 | SCM_MPEG2), nvhttp::get_codec_mode_flags());
+  EXPECT_NE(static_cast<std::uint32_t>(SCM_H263), static_cast<std::uint32_t>(SCM_MPEG2));
 }
 
 TEST_P(CodecModeFlagsTest, AdvertisesOnlyProbedAndConfiguredModes) {

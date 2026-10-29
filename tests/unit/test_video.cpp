@@ -548,18 +548,25 @@ TEST(SoftwareEncoderConversion, Bgr0AndNv12) {
 }
 
 /**
- * @brief Restores the global video configuration and probe modes that the H.264 toggle tests change.
+ * @brief Restores the global video configuration and probe modes that the advertised codec tests change.
  */
-class VideoH264ToggleTest: public testing::Test {
+class VideoAdvertisedCodecTest: public BaseTest {
 protected:
   /**
-   * @brief Save the global state.
+   * @brief Save the global state and start with only H.264 able to be advertised.
    */
   void SetUp() override {
+    BaseTest::SetUp();
     h264_mode_ = config::video.h264_mode;
     hevc_mode_ = video::active_hevc_mode;
     av1_mode_ = video::active_av1_mode;
     h263_mode_ = video::active_h263_mode;
+    mpeg2_mode_ = video::active_mpeg2_mode;
+
+    video::active_hevc_mode = 1;
+    video::active_av1_mode = 1;
+    video::active_h263_mode = 0;
+    video::active_mpeg2_mode = 0;
   }
 
   /**
@@ -570,6 +577,8 @@ protected:
     video::active_hevc_mode = hevc_mode_;
     video::active_av1_mode = av1_mode_;
     video::active_h263_mode = h263_mode_;
+    video::active_mpeg2_mode = mpeg2_mode_;
+    BaseTest::TearDown();
   }
 
 private:
@@ -577,9 +586,10 @@ private:
   int hevc_mode_ = 0;  ///< Saved HEVC mode.
   int av1_mode_ = 0;  ///< Saved AV1 mode.
   int h263_mode_ = 0;  ///< Saved H.263+ mode.
+  int mpeg2_mode_ = 0;  ///< Saved MPEG-2 mode.
 };
 
-TEST_F(VideoH264ToggleTest, H264IsEnabledUnlessTheSettingTurnsItOff) {
+TEST_F(VideoAdvertisedCodecTest, H264IsEnabledUnlessTheSettingTurnsItOff) {
   config::video.h264_mode = 0;
   EXPECT_TRUE(video::h264_enabled());
 
@@ -587,31 +597,26 @@ TEST_F(VideoH264ToggleTest, H264IsEnabledUnlessTheSettingTurnsItOff) {
   EXPECT_FALSE(video::h264_enabled());
 }
 
-TEST_F(VideoH264ToggleTest, EnabledH264AlwaysCountsAsAnAdvertisedCodec) {
+TEST_F(VideoAdvertisedCodecTest, EnabledH264AlwaysCountsAsAnAdvertisedCodec) {
   config::video.h264_mode = 0;
-  video::active_hevc_mode = 1;
-  video::active_av1_mode = 1;
-  video::active_h263_mode = 0;
   EXPECT_TRUE(video::has_advertised_codec());
 }
 
-TEST_F(VideoH264ToggleTest, DisabledH264WithNoOtherCodecAdvertisesNothing) {
+TEST_F(VideoAdvertisedCodecTest, DisabledH264WithNoOtherCodecAdvertisesNothing) {
   config::video.h264_mode = 1;
-  video::active_hevc_mode = 1;
-  video::active_av1_mode = 1;
-  video::active_h263_mode = 0;
   EXPECT_FALSE(video::has_advertised_codec());
 }
 
-TEST_F(VideoH264ToggleTest, DisabledH264NeedsHevcAv1OrH263ToStillAdvertiseSomething) {
+TEST_F(VideoAdvertisedCodecTest, DisabledH264NeedsAnotherActiveCodecToStillAdvertiseSomething) {
   config::video.h264_mode = 1;
-  video::active_hevc_mode = 1;
-  video::active_av1_mode = 1;
-  video::active_h263_mode = 0;
 
   video::active_h263_mode = 1;
   EXPECT_TRUE(video::has_advertised_codec());
   video::active_h263_mode = 0;
+
+  video::active_mpeg2_mode = 1;
+  EXPECT_TRUE(video::has_advertised_codec());
+  video::active_mpeg2_mode = 0;
 
   video::active_hevc_mode = 2;
   EXPECT_TRUE(video::has_advertised_codec());
@@ -692,12 +697,12 @@ INSTANTIATE_TEST_SUITE_P(
 /**
  * @brief Parameterized coverage for the VBV buffer size given to the H.263 encoder.
  */
-struct H263RcBufferSizeTest: testing::TestWithParam<std::tuple<int, int, int, int>> {};
+struct MpegRcBufferSizeTest: testing::TestWithParam<std::tuple<int, int, int, int>> {};
 
-TEST_P(H263RcBufferSizeTest, RoundsUpToAtLeastOneFrame) {
+TEST_P(MpegRcBufferSizeTest, RoundsUpToAtLeastOneFrame) {
   const auto &[bitrate, fps_num, fps_den, expected] = GetParam();
   const AVRational fps {fps_num, fps_den};
-  const auto size = video::h263_rc_buffer_size(bitrate, fps);
+  const auto size = video::mpeg_rc_buffer_size(bitrate, fps);
   EXPECT_EQ(expected, size);
 
   // FFmpeg's check is bit_rate * time_base.num > rc_buffer_size * time_base.den, with time_base = 1 / fps
@@ -705,8 +710,8 @@ TEST_P(H263RcBufferSizeTest, RoundsUpToAtLeastOneFrame) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-  H263RcBufferSizeTests,
-  H263RcBufferSizeTest,
+  MpegRcBufferSizeTests,
+  MpegRcBufferSizeTest,
   testing::Values(
     std::make_tuple(3000000, 30, 1, 100000),
     std::make_tuple(5000000, 60, 1, 83334),
@@ -748,7 +753,7 @@ TEST(VideoH263Test, EncoderOpensWithTheSoftwareOptionSetAndProducesKeyedPictures
   ctx->rc_max_rate = bitrate;
   ctx->bit_rate = bitrate;
   ctx->rc_min_rate = bitrate;
-  ctx->rc_buffer_size = video::h263_rc_buffer_size(bitrate, fps);
+  ctx->rc_buffer_size = video::mpeg_rc_buffer_size(bitrate, fps);
   ctx->slices = 2;
   ctx->thread_type = FF_THREAD_SLICE;
   ctx->thread_count = ctx->slices;
@@ -819,4 +824,233 @@ TEST(VideoH263Test, EncoderOpensWithTheSoftwareOptionSetAndProducesKeyedPictures
   }
   EXPECT_EQ(4, received);
   EXPECT_EQ(2, keyed);
+}
+
+TEST(VideoMpeg2Test, CodecFromConfigSelectsMpeg2ForFormatFour) {
+  video::encoder_t encoder {"test"sv, {}, {}, {}, {}, 0};
+  encoder.mpeg2.name = "mpeg2video"s;
+
+  video::config_t config {};
+  config.videoFormat = 4;
+  EXPECT_EQ(&encoder.mpeg2, &encoder.codec_from_config(config));
+  config.videoFormat = 3;
+  EXPECT_EQ(&encoder.h263, &encoder.codec_from_config(config));
+}
+
+TEST(VideoMpeg2Test, OnlyTheSoftwareEncoderProducesMpeg2) {
+  EXPECT_EQ("mpeg2video"sv, video::software.mpeg2.name);
+  EXPECT_FALSE(video::software.mpeg2[video::encoder_t::PASSED]);
+
+  const auto sc_threshold = std::ranges::find(video::software.mpeg2.common_options, "sc_threshold"sv, &video::encoder_t::option_t::name);
+  ASSERT_NE(video::software.mpeg2.common_options.end(), sc_threshold);
+  ASSERT_TRUE(std::holds_alternative<int>(sc_threshold->value));
+  EXPECT_EQ(1000000000, std::get<int>(sc_threshold->value));
+
+  // MPEG-2 needs no relaxed compliance, unlike H.263+
+  EXPECT_EQ(video::software.mpeg2.common_options.end(), std::ranges::find(video::software.mpeg2.common_options, "strict"sv, &video::encoder_t::option_t::name));
+
+#ifndef __APPLE__
+  EXPECT_TRUE(video::nvenc.mpeg2.name.empty());
+  EXPECT_FALSE(video::nvenc.mpeg2[video::encoder_t::PASSED]);
+#endif
+}
+
+/**
+ * @brief Parameterized coverage for the stream sizes FFmpeg's MPEG-2 encoder accepts.
+ */
+struct Mpeg2DimensionsTest: testing::TestWithParam<std::tuple<int, int, bool>> {};
+
+TEST_P(Mpeg2DimensionsTest, Check) {
+  const auto &[width, height, expected] = GetParam();
+  EXPECT_EQ(expected, video::mpeg2_dimensions_supported(width, height)) << width << 'x' << height;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  Mpeg2DimensionsTests,
+  Mpeg2DimensionsTest,
+  testing::Values(
+    std::make_tuple(400, 240, true),
+    std::make_tuple(320, 240, true),
+    std::make_tuple(800, 480, true),
+    std::make_tuple(1920, 1080, true),
+    std::make_tuple(3840, 2160, true),
+    std::make_tuple(398, 240, true),
+    std::make_tuple(399, 239, true),
+    std::make_tuple(2, 2, true),
+    std::make_tuple(4095, 64, true),
+    std::make_tuple(4098, 64, true),
+    std::make_tuple(8191, 16383, true),
+    std::make_tuple(16383, 16383, true),
+    std::make_tuple(64, 16383, true),
+    std::make_tuple(4096, 240, false),
+    std::make_tuple(240, 4096, false),
+    std::make_tuple(4097, 240, false),
+    std::make_tuple(240, 4097, false),
+    std::make_tuple(8192, 240, false),
+    std::make_tuple(8193, 240, false),
+    std::make_tuple(12288, 240, false),
+    std::make_tuple(12289, 240, false),
+    std::make_tuple(16384, 240, false),
+    std::make_tuple(240, 16384, false),
+    std::make_tuple(1, 240, false),
+    std::make_tuple(240, 1, false),
+    std::make_tuple(0, 240, false),
+    std::make_tuple(240, 0, false),
+    std::make_tuple(-400, 240, false),
+    std::make_tuple(240, -400, false)
+  )
+);
+
+/**
+ * @brief Parameterized coverage for the framerates FFmpeg's MPEG-2 encoder accepts, as numerator, denominator and result.
+ */
+struct Mpeg2FramerateTest: testing::TestWithParam<std::tuple<int, int, bool>> {};
+
+TEST_P(Mpeg2FramerateTest, Check) {
+  const auto &[num, den, expected] = GetParam();
+  EXPECT_EQ(expected, video::mpeg2_framerate_supported(AVRational {num, den})) << num << '/' << den;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  Mpeg2FramerateTests,
+  Mpeg2FramerateTest,
+  testing::Values(
+    std::make_tuple(24, 1, true),
+    std::make_tuple(25, 1, true),
+    std::make_tuple(30, 1, true),
+    std::make_tuple(50, 1, true),
+    std::make_tuple(60, 1, true),
+    std::make_tuple(72, 1, true),
+    std::make_tuple(75, 1, true),
+    std::make_tuple(90, 1, true),
+    std::make_tuple(100, 1, true),
+    std::make_tuple(120, 1, true),
+    std::make_tuple(180, 1, true),
+    std::make_tuple(240, 1, true),
+    std::make_tuple(24000, 1001, true),
+    std::make_tuple(30000, 1001, true),
+    std::make_tuple(60000, 1001, true),
+    std::make_tuple(90000, 1001, true),
+    std::make_tuple(120000, 1001, true),
+    std::make_tuple(7, 1, false),
+    std::make_tuple(143, 1, false),
+    std::make_tuple(144, 1, false),
+    std::make_tuple(300, 1, false),
+    std::make_tuple(144000, 1001, false),
+    std::make_tuple(0, 1, false),
+    std::make_tuple(60, 0, false),
+    std::make_tuple(-60, 1, false)
+  )
+);
+
+TEST(VideoMpeg2Test, EncoderOpensWithTheSoftwareOptionSetAndProducesKeyedPictures) {
+  const auto *codec = avcodec_find_encoder_by_name(video::software.mpeg2.name.c_str());
+  if (!codec) {
+    GTEST_SKIP() << "this FFmpeg build has no mpeg2video encoder";
+  }
+
+  constexpr int width = 400;
+  constexpr int height = 240;
+  constexpr int bitrate = 5000 * 1000;
+  const AVRational fps {60, 1};
+
+  std::unique_ptr<AVCodecContext, void (*)(AVCodecContext *)> ctx {
+    avcodec_alloc_context3(codec),
+    [](AVCodecContext *c) {
+      avcodec_free_context(&c);
+    }
+  };
+  ASSERT_NE(nullptr, ctx);
+
+  // The settings make_avcodec_encode_session() applies to every software encode
+  ctx->width = width;
+  ctx->height = height;
+  ctx->framerate = fps;
+  ctx->time_base = AVRational {fps.den, fps.num};
+  ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+  ctx->max_b_frames = 0;
+  ctx->gop_size = 600;
+  ctx->keyint_min = std::numeric_limits<int>::max();
+  ctx->flags = AV_CODEC_FLAG_CLOSED_GOP | AV_CODEC_FLAG_LOW_DELAY;
+  ctx->flags2 |= AV_CODEC_FLAG2_FAST;
+  ctx->rc_max_rate = bitrate;
+  ctx->bit_rate = bitrate;
+  ctx->rc_min_rate = bitrate;
+  ctx->rc_buffer_size = video::mpeg_rc_buffer_size(bitrate, fps);
+  ctx->slices = 2;
+  ctx->thread_type = FF_THREAD_SLICE;
+  ctx->thread_count = ctx->slices;
+
+  AVDictionary *options = nullptr;
+  for (const auto &option : video::software.mpeg2.common_options) {
+    if (const auto *text = std::get_if<std::string>(&option.value)) {
+      av_dict_set(&options, option.name.c_str(), text->c_str(), 0);
+    } else if (const auto *number = std::get_if<int>(&option.value)) {
+      av_dict_set_int(&options, option.name.c_str(), *number, 0);
+    }
+  }
+  ASSERT_GE(avcodec_open2(ctx.get(), codec, &options), 0);
+  av_dict_free(&options);
+
+  std::unique_ptr<AVFrame, void (*)(AVFrame *)> frame {
+    av_frame_alloc(),
+    [](AVFrame *f) {
+      av_frame_free(&f);
+    }
+  };
+  frame->format = AV_PIX_FMT_YUV420P;
+  frame->width = width;
+  frame->height = height;
+  ASSERT_GE(av_frame_get_buffer(frame.get(), 0), 0);
+
+  std::unique_ptr<AVPacket, void (*)(AVPacket *)> packet {
+    av_packet_alloc(),
+    [](AVPacket *p) {
+      av_packet_free(&p);
+    }
+  };
+
+  std::vector<bool> keys;
+  const auto drain = [&]() {
+    while (avcodec_receive_packet(ctx.get(), packet.get()) == 0) {
+      EXPECT_GE(packet->size, 4);
+      if (packet->size >= 4) {
+        // Every picture starts with a start code prefix, followed by a sequence header when it is keyed
+        // and by a picture header when it is not
+        const bool key = packet->flags & AV_PKT_FLAG_KEY;
+        EXPECT_EQ(0x00, packet->data[0]);
+        EXPECT_EQ(0x00, packet->data[1]);
+        EXPECT_EQ(0x01, packet->data[2]);
+        EXPECT_EQ(key ? 0xB3 : 0x00, packet->data[3]);
+        keys.push_back(key);
+      }
+      av_packet_unref(packet.get());
+    }
+  };
+
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_GE(av_frame_make_writable(frame.get()), 0);
+    for (int plane = 0; plane < 3; ++plane) {
+      const auto rows = plane == 0 ? height : height / 2;
+      std::fill_n(frame->data[plane], static_cast<std::size_t>(frame->linesize[plane]) * rows, static_cast<uint8_t>(64 + 40 * plane + i));
+    }
+    frame->pts = i;
+
+    // Sunshine requests an IDR frame by forcing the picture type, like encode() in video.cpp does
+    const bool idr = i == 0 || i == 2;
+    frame->pict_type = idr ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+    if (idr) {
+      frame->flags |= AV_FRAME_FLAG_KEY;
+    } else {
+      frame->flags &= ~AV_FRAME_FLAG_KEY;
+    }
+
+    ASSERT_GE(avcodec_send_frame(ctx.get(), frame.get()), 0);
+    drain();
+  }
+
+  ASSERT_GE(avcodec_send_frame(ctx.get(), nullptr), 0);
+  drain();
+
+  EXPECT_EQ((std::vector<bool> {true, false, true, false}), keys);
 }

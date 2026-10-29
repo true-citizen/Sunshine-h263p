@@ -1236,6 +1236,9 @@ namespace nvhttp {
     if (video::active_h263_mode) {
       codec_mode_flags |= SCM_H263;
     }
+    if (video::active_mpeg2_mode) {
+      codec_mode_flags |= SCM_MPEG2;
+    }
     return codec_mode_flags;
   }
 

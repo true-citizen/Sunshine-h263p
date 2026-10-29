@@ -69,6 +69,16 @@ const config = ref(props.config)
       <div class="form-text">{{ $t('config.h263_mode_desc') }}</div>
     </div>
 
+    <!-- MPEG-2 Support -->
+    <div class="mb-3">
+      <label for="mpeg2_mode" class="form-label">{{ $t('config.mpeg2_mode') }}</label>
+      <select id="mpeg2_mode" class="form-select" v-model="config.mpeg2_mode">
+        <option value="0">{{ $t('config.mpeg2_mode_0') }}</option>
+        <option value="1">{{ $t('config.mpeg2_mode_1') }}</option>
+      </select>
+      <div class="form-text">{{ $t('config.mpeg2_mode_desc') }}</div>
+    </div>
+
     <!-- H.264 Support -->
     <div class="mb-3">
       <label for="h264_mode" class="form-label">{{ $t('config.h264_mode') }}</label>

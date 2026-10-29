@@ -389,6 +389,15 @@ namespace nvhttp {
   #define SCM_H263 0x10000000
 #endif
 
+#ifndef SCM_MPEG2
+  /**
+   * @brief ServerCodecModeSupport bit that advertises MPEG-2 (moonlight-N3DS extension).
+   *
+   * Defined here as well so Sunshine builds against an upstream moonlight-common-c, which lacks it.
+   */
+  #define SCM_MPEG2 0x20000000
+#endif
+
   /**
    * @brief Get codec mode flags.
    *

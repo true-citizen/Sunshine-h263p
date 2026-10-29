@@ -2262,6 +2262,44 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
 </table>
 
+### mpeg2_mode
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Allows clients that cannot decode H.264 fast enough, such as the original Nintendo 3DS, to request an MPEG-2
+            video stream. MPEG-2 is only available with the software encoder (set `encoder = software`). The stream size
+            can be 2 to 16383 pixels in each direction, except a width or height that is a multiple of 4096 or one more
+            than a multiple of 4096. The framerate must be one MPEG-2 can express: 24, 25, 30, 50 and 60 and the NTSC
+            rates 23.976, 29.97 and 59.94, scaled by 1 to 4 and divided by 1 to 32 (so 90, 120 and 240 work, but 144 does
+            not). Clients that do not know about MPEG-2 are not affected.
+            @note{MPEG-2 is an extension to the Moonlight protocol. It requires a client that supports it.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            0
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            mpeg2_mode = 1
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="2">Choices</td>
+        <td>0</td>
+        <td>do not advertise support for MPEG-2</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>advertise support for MPEG-2 when the software encoder is used</td>
+    </tr>
+</table>
+
 ### h264_mode
 
 <table>
@@ -2270,8 +2308,8 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
         <td colspan="2">
             Allows H.264 to be turned off, so clients are not told it is available and a client that asks for it anyway
             is rejected. Use this to stop a client from falling back to H.264, for example to force a client to use
-            H.263+ (see `h263_mode`). Make sure another codec is available (H.263+ with the software
-            encoder, HEVC or AV1), otherwise clients will have nothing to stream with.
+            H.263+ (see `h263_mode`) or MPEG-2 (see `mpeg2_mode`). Make sure another codec is available (H.263+ or
+            MPEG-2 with the software encoder, HEVC or AV1), otherwise clients will have nothing to stream with.
             @note{The encoder probe still uses H.264 internally to check that an encoder works.}
         </td>
     </tr>

@@ -914,6 +914,11 @@ namespace rtsp_stream {
       ss << "a=rtpmap:99 H263-1998/90000"sv << std::endl;
     }
 
+    if (video::active_mpeg2_mode) {
+      // RFC 2250 encoding name for MPEG-1/2 video, used for the moonlight-N3DS MPEG-2 extension
+      ss << "a=rtpmap:100 MPV/90000"sv << std::endl;
+    }
+
     if (!session.surround_params.empty()) {
       // If we have our own surround parameters, advertise them twice first
       ss << "a=fmtp:97 surround-params="sv << session.surround_params << std::endl;
@@ -1260,6 +1265,27 @@ namespace rtsp_stream {
 
     if (config.monitor.videoFormat == 3 && !video::h263_dimensions_supported(config.monitor.width, config.monitor.height)) {
       BOOST_LOG(warning) << "H.263+ cannot encode "sv << config.monitor.width << 'x' << config.monitor.height << ", yet the client requested it"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
+    if (config.monitor.videoFormat == 4 && !video::active_mpeg2_mode) {
+      BOOST_LOG(warning) << "MPEG-2 is disabled, yet the client requested MPEG-2"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
+    if (config.monitor.videoFormat == 4 && !video::mpeg2_dimensions_supported(config.monitor.width, config.monitor.height)) {
+      BOOST_LOG(warning) << "MPEG-2 cannot encode "sv << config.monitor.width << 'x' << config.monitor.height << ", yet the client requested it"sv;
+
+      respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
+      return;
+    }
+
+    if (config.monitor.videoFormat == 4 && !video::mpeg2_framerate_supported(video::framerate_to_rational(config.monitor))) {
+      BOOST_LOG(warning) << "MPEG-2 cannot encode "sv << config.monitor.framerate << " fps, yet the client requested it"sv;
 
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
       return;

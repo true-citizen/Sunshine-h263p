@@ -77,6 +77,7 @@ namespace config {
     int av1_mode;  ///< AV1 support mode advertised to clients.
     int h263_mode;  ///< H.263+ support: 0 = disabled, 1 = advertise it when the software encoder can produce it.
     int h264_mode;  ///< H.264 support: 0 = enabled, 1 = disabled (not advertised and rejected when requested).
+    int mpeg2_mode;  ///< MPEG-2 support: 0 = disabled, 1 = advertise it when the software encoder can produce it.
 
     int min_threads;  ///< Minimum number of threads or slices for CPU encoding.
 

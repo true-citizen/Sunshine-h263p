@@ -39,7 +39,7 @@ namespace video {
     int slicesPerFrame;  ///< Number of slices per frame.
     int numRefFrames;  ///< Maximum number of reference frames.
     int encoderCscMode;  ///< Requested color range and SDR colorspace; HDR always uses BT.2020 and ST2084.
-    int videoFormat;  ///< Video codec format: 0 = H.264, 1 = HEVC, 2 = AV1, 3 = H.263+ (moonlight-N3DS extension).
+    int videoFormat;  ///< Video codec format: 0 = H.264, 1 = HEVC, 2 = AV1, 3 = H.263+, 4 = MPEG-2 (moonlight-N3DS extensions).
     int dynamicRange;  ///< Encoding color depth: 0 = 8-bit, 1 = 10-bit.
     int chromaSamplingType;  ///< Chroma sampling type: 0 = 4:2:0, 1 = 4:4:4.
     int enableIntraRefresh;  ///< Intra refresh setting: 0 = disabled, 1 = enabled.
@@ -405,7 +405,7 @@ namespace video {
      * @brief Select the codec descriptor requested by a stream configuration.
      *
      * @param config Configuration values to apply.
-     * @return Codec descriptor for H.264, HEVC, AV1, or H.263+.
+     * @return Codec descriptor for H.264, HEVC, AV1, H.263+, or MPEG-2.
      */
     const codec_t &codec_from_config(const config_t &config) const {
       switch (config.videoFormat) {
@@ -420,14 +420,17 @@ namespace video {
           return av1;
         case 3:
           return h263;
+        case 4:
+          return mpeg2;
       }
     }
 
     uint32_t flags;  ///< Encoder flags advertised to clients through GameStream capability responses.
 
     // Declared after the members above on purpose: encoders initialize those positionally,
-    // so the encoders that cannot produce H.263+ keep value-initializing this (no name, no capabilities).
+    // so the encoders that cannot produce H.263+ or MPEG-2 keep value-initializing these (no name, no capabilities).
     codec_t h263;  ///< H.263+ codec capability and option set (software encoder only).
+    codec_t mpeg2;  ///< MPEG-2 codec capability and option set (software encoder only).
   };
 
   /**
@@ -710,6 +713,35 @@ namespace video {
   bool h263_dimensions_supported(int width, int height);
 
   /**
+   * @brief MPEG-2 mode selected by the most recent encoder probe: 1 when MPEG-2 is advertised, otherwise 0.
+   */
+  extern int active_mpeg2_mode;
+
+  /**
+   * @brief Check whether the MPEG-2 encoder can produce a stream of the given size.
+   *
+   * FFmpeg's MPEG-2 encoder accepts sizes from 2 to 16383 pixels in each direction, but refuses a width or
+   * height that is a multiple of 4096 or one more than a multiple of 4096.
+   *
+   * @param width Stream width in pixels.
+   * @param height Stream height in pixels.
+   * @return True when a stream of that size can be encoded as MPEG-2.
+   */
+  bool mpeg2_dimensions_supported(int width, int height);
+
+  /**
+   * @brief Check whether the MPEG-2 encoder can produce a stream with the given framerate.
+   *
+   * MPEG-2 stores one of eight base framerates (24000/1001, 24, 25, 30000/1001, 30, 50, 60000/1001 and 60)
+   * and scales it by (n + 1) / (d + 1), with n from 0 to 3 and d from 0 to 31. This accepts exactly the
+   * framerates that can be written that way, for example 24, 30, 60, 90, 120, 240 and 59.94, but not 144.
+   *
+   * @param framerate Exact framerate as a rational.
+   * @return True when a stream with that framerate can be encoded as MPEG-2.
+   */
+  bool mpeg2_framerate_supported(const AVRational &framerate);
+
+  /**
    * @brief Check whether H.264 is allowed to be advertised to and requested by clients.
    *
    * H.264 stays enabled unless the user sets `h264_mode = 1`. The encoder probe still uses H.264 to
@@ -722,8 +754,8 @@ namespace video {
   /**
    * @brief Check whether at least one codec is advertised to clients after the most recent encoder probe.
    *
-   * This is false only when H.264 is disabled and neither HEVC, AV1 nor H.263+ is active, which leaves
-   * clients with nothing they could request.
+   * This is false only when H.264 is disabled and none of HEVC, AV1, H.263+ or MPEG-2 is active, which
+   * leaves clients with nothing they could request.
    *
    * @return True when at least one codec is advertised.
    */
@@ -843,9 +875,9 @@ namespace video {
   }
 
   /**
-   * @brief VBV buffer size, in bits, that FFmpeg's H.263 encoder accepts.
+   * @brief VBV buffer size, in bits, that FFmpeg's H.263 and MPEG-2 encoders accept.
    *
-   * The encoder refuses a buffer that is smaller than one frame of bits. The usual truncating
+   * Both encoders refuse a buffer that is smaller than one frame of bits. The usual truncating
    * bitrate / framerate is too small whenever that division is not exact (for example 5000 Kbps
    * at 60 fps), so this rounds up using the exact framerate instead.
    *
@@ -853,7 +885,7 @@ namespace video {
    * @param framerate Exact framerate as a rational.
    * @return Buffer size in bits.
    */
-  inline int h263_rc_buffer_size(int bitrate, const AVRational &framerate) {
+  inline int mpeg_rc_buffer_size(int bitrate, const AVRational &framerate) {
     return static_cast<int>((static_cast<int64_t>(bitrate) * framerate.den + framerate.num - 1) / framerate.num);
   }
 }  // namespace video
