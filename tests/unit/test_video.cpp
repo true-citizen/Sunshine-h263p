@@ -1054,3 +1054,18 @@ TEST(VideoMpeg2Test, EncoderOpensWithTheSoftwareOptionSetAndProducesKeyedPicture
 
   EXPECT_EQ((std::vector<bool> {true, false, true, false}), keys);
 }
+
+/**
+ * @brief The MPEG-2 bitrate floor must stay above the lowest bitrate FFmpeg's mpeg2video was measured to accept.
+ */
+TEST(Mpeg2MinBitrateTest, StaysAboveMeasuredThresholds) {
+  // Smallest bitrate (Kbps) that encoded without tripping FFmpeg's VBV assertion, per picture size
+  EXPECT_GE(video::mpeg2_min_bitrate_kbps(400, 240), 25 + 1);
+  EXPECT_LE(video::mpeg2_min_bitrate_kbps(400, 240), 50);
+  EXPECT_GE(video::mpeg2_min_bitrate_kbps(800, 480), 100 + 1);
+  EXPECT_LE(video::mpeg2_min_bitrate_kbps(800, 480), 150 + 100);
+  EXPECT_GE(video::mpeg2_min_bitrate_kbps(1280, 720), 200 + 1);
+  EXPECT_GE(video::mpeg2_min_bitrate_kbps(1920, 1080), 300 + 1);
+  EXPECT_EQ(1, video::mpeg2_min_bitrate_kbps(1, 1));
+  EXPECT_EQ(1037, video::mpeg2_min_bitrate_kbps(1920, 1080));
+}

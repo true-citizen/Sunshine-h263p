@@ -2320,6 +2320,14 @@ namespace video {
       }
 
       auto bitrate = ((config::video.max_bitrate > 0) ? std::min(config.bitrate, config::video.max_bitrate) : config.bitrate) * 1000;
+      if (config.videoFormat == 4) {
+        // mpeg2video aborts the process when the bitrate is too low for the picture size
+        const auto min_bitrate = mpeg2_min_bitrate_kbps(config.width, config.height) * 1000;
+        if (bitrate < min_bitrate) {
+          BOOST_LOG(warning) << "MPEG-2 cannot encode "sv << config.width << 'x' << config.height << " at "sv << bitrate / 1000 << " Kbps, raising the bitrate to "sv << min_bitrate / 1000 << " Kbps"sv;
+          bitrate = min_bitrate;
+        }
+      }
       BOOST_LOG(info) << "Streaming bitrate is " << bitrate;
       ctx->rc_max_rate = bitrate;
       ctx->bit_rate = bitrate;

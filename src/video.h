@@ -888,4 +888,20 @@ namespace video {
   inline int mpeg_rc_buffer_size(int bitrate, const AVRational &framerate) {
     return static_cast<int>((static_cast<int64_t>(bitrate) * framerate.den + framerate.num - 1) / framerate.num);
   }
+
+  /**
+   * @brief Lowest bitrate the MPEG-2 encoder copes with for a given picture size.
+   *
+   * FFmpeg's mpeg2video asserts (and so aborts the whole process) when the first picture does not
+   * fit the VBV model, which happens below roughly 0.25 to 0.5 Kbps per thousand pixels depending on
+   * the content. 0.5 Kbps per thousand pixels stays on the safe side of every measured case
+   * (400x240: 50 Kbps ok / 25 fails, 800x480: 150 ok / 100 fails, 1920x1080: 500 ok / 300 fails).
+   *
+   * @param width Picture width in pixels.
+   * @param height Picture height in pixels.
+   * @return Minimum bitrate in Kbps.
+   */
+  inline int mpeg2_min_bitrate_kbps(int width, int height) {
+    return static_cast<int>((static_cast<int64_t>(width) * height + 1999) / 2000);
+  }
 }  // namespace video
